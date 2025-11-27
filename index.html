@@ -1,187 +1,394 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-TW">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Color Finder - AI On-Device Game</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI 尋寶獵人</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
-<style>
-    body {
-        margin: 0;
-        background: #111;
-        color: #fff;
-        font-family: Arial;
-        text-align: center;
-        overflow: hidden;
-    }
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #222;
+            font-family: "Microsoft JhengHei", "Heiti TC", sans-serif;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100vh;
+            color: white;
+        }
 
-    #gameArea {
-        position: relative;
-        width: 100vw;
-        height: 100vh;
-    }
+        /* 遊戲資訊面板 */
+        #game-hud {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            padding: 15px 10px;
+            background: linear-gradient(180deg, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0) 100%);
+            z-index: 10;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-sizing: border-box;
+            text-shadow: 1px 1px 3px black;
+            pointer-events: none; /* 讓點擊穿透 */
+        }
 
-    video {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-        position: absolute;
-        top: 0;
-        left: 0;
-    }
+        .hud-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
 
-    #overlay {
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        pointer-events: none;
-    }
+        .label {
+            font-size: 12px;
+            color: #ccc;
+        }
 
-    #uiBox {
-        position: absolute;
-        bottom: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-        background: rgba(0,0,0,0.6);
-        padding: 12px 16px;
-        border-radius: 12px;
-        font-size: 18px;
-    }
+        .value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #ffeb3b;
+        }
 
-    #targetColorBox {
-        display: inline-block;
-        width: 22px;
-        height: 22px;
-        border-radius: 4px;
-        margin-left: 8px;
-        vertical-align: middle;
-    }
+        #target-display {
+            font-size: 28px;
+            color: #00ff9d;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 5px 15px;
+            border-radius: 20px;
+            border: 2px solid #00ff9d;
+        }
 
-    #successMsg {
-        position: absolute;
-        top: 25px;
-        left: 50%;
-        transform: translateX(-50%);
-        font-size: 28px;
-        color: #00ff8f;
-        font-weight: bold;
-        text-shadow: 0 0 10px #00ff8f;
-        opacity: 0;
-        transition: opacity 0.3s;
-    }
-</style>
+        /* 視訊容器 */
+        #cam-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #000;
+        }
+
+        video {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover; /* 讓畫面填滿手機螢幕 */
+        }
+
+        canvas {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        /* UI 按鈕與遮罩 */
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.85);
+            z-index: 20;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            transition: opacity 0.5s;
+        }
+
+        #overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        button {
+            padding: 15px 40px;
+            font-size: 20px;
+            background: linear-gradient(45deg, #ff00cc, #3333ff);
+            color: white;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 0 20px rgba(255, 0, 204, 0.5);
+            margin-top: 20px;
+            transition: transform 0.1s;
+        }
+
+        button:active {
+            transform: scale(0.95);
+        }
+
+        /* 成功時的動畫效果 */
+        @keyframes flashSuccess {
+            0% { box-shadow: inset 0 0 0 0 rgba(0, 255, 0, 0); }
+            50% { box-shadow: inset 0 0 100px 50px rgba(0, 255, 0, 0.8); }
+            100% { box-shadow: inset 0 0 0 0 rgba(0, 255, 0, 0); }
+        }
+
+        .success-anim {
+            animation: flashSuccess 0.5s ease-out;
+        }
+
+        #message-area {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 15;
+            font-size: 40px;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 0 0 10px #00ff00;
+            display: none;
+            white-space: nowrap;
+        }
+    </style>
 </head>
-
 <body>
-<div id="gameArea">
-    <video id="video" autoplay playsinline></video>
-    <canvas id="overlay"></canvas>
 
-    <div id="successMsg">成功！🎉</div>
-
-    <div id="uiBox">
-        找到顏色：
-        <span id="colorName"></span>
-        <span id="targetColorBox"></span>
+    <div id="game-hud">
+        <div class="hud-item">
+            <span class="label">分數</span>
+            <span class="value" id="score">0</span>
+        </div>
+        <div class="hud-item">
+            <div id="target-display">?</div>
+            <span class="label">請尋找這個物品</span>
+        </div>
+        <div class="hud-item">
+            <span class="label">時間</span>
+            <span class="value" id="timer">0</span>
+        </div>
     </div>
-</div>
 
-<script>
-let video = document.getElementById("video");
-let canvas = document.getElementById("overlay");
-let ctx = canvas.getContext("2d");
+    <div id="message-area">找到了！✨</div>
 
-let colorNameEl = document.getElementById("colorName");
-let targetColorBox = document.getElementById("targetColorBox");
-let successMsg = document.getElementById("successMsg");
+    <div id="cam-container">
+        <video id="video" playsinline muted></video>
+        <canvas id="canvas"></canvas>
+    </div>
 
-const COLORS = [
-    { name: "紅色", rgb: [255, 0, 0] },
-    { name: "綠色", rgb: [0, 255, 0] },
-    { name: "藍色", rgb: [0, 120, 255] },
-    { name: "黃色", rgb: [255, 255, 0] },
-    { name: "紫色", rgb: [180, 0, 180] }
-];
+    <div id="overlay">
+        <h1 style="font-size: 40px; margin-bottom: 10px;">🔍 尋寶獵人</h1>
+        <p id="status-text" style="color:#aaa; margin-bottom: 30px;">準備好你的相機了嗎？</p>
+        <button id="start-btn" onclick="initGame()">開始遊戲</button>
+    </div>
 
-let targetColor;
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const overlay = document.getElementById('overlay');
+        const statusText = document.getElementById('status-text');
+        const startBtn = document.getElementById('start-btn');
+        const targetDisplay = document.getElementById('target-display');
+        const scoreDisplay = document.getElementById('score');
+        const timerDisplay = document.getElementById('timer');
+        const msgArea = document.getElementById('message-area');
+        const camContainer = document.getElementById('cam-container');
 
-function chooseNewColor() {
-    targetColor = COLORS[Math.floor(Math.random() * COLORS.length)];
-    colorNameEl.innerText = targetColor.name;
-    targetColorBox.style.background = `rgb(${targetColor.rgb.join(",")})`;
-}
+        let model = null;
+        let isDetecting = false;
+        let currentTarget = null;
+        let score = 0;
+        let startTime = 0;
+        let timerInterval = null;
+        let cooldown = false; // 冷卻時間，避免連續偵測
 
-async function setupCamera() {
-    const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
-        audio: false
-    });
-    video.srcObject = stream;
+        // 適合室內尋寶的物品清單 (COCO-SSD 類別 : 中文名稱)
+        const SCAVENGER_ITEMS = [
+            { id: 'cup', name: '杯子' },
+            { id: 'bottle', name: '寶特瓶/水壺' },
+            { id: 'cell phone', name: '手機' },
+            { id: 'keyboard', name: '鍵盤' },
+            { id: 'mouse', name: '滑鼠' },
+            { id: 'remote', name: '遙控器' },
+            { id: 'book', name: '書本' },
+            { id: 'chair', name: '椅子' },
+            { id: 'potted plant', name: '盆栽' },
+            { id: 'laptop', name: '筆電' },
+            { id: 'clock', name: '時鐘' },
+            { id: 'scissors', name: '剪刀' },
+            { id: 'backpack', name: '背包' },
+            { id: 'person', name: '人類' }, // 送分題
+            { id: 'spoon', name: '湯匙' }
+        ];
 
-    return new Promise(resolve => {
-        video.onloadedmetadata = () => resolve();
-    });
-}
+        // 1. 初始化與載入模型
+        async function initGame() {
+            startBtn.disabled = true;
+            startBtn.innerText = "模型載入中 (需網路)...";
+            statusText.innerText = "第一次下載約需 10-30 秒，之後可離線。";
 
-function analyzeColor() {
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    let frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            try {
+                if (!model) {
+                    model = await cocoSsd.load();
+                }
+                
+                startCamera();
+            } catch (error) {
+                console.error(error);
+                statusText.innerText = "載入失敗，請檢查網路連線。";
+                startBtn.disabled = false;
+                startBtn.innerText = "重試";
+            }
+        }
 
-    let rTotal = 0, gTotal = 0, bTotal = 0;
-    let count = 0;
+        // 2. 啟動相機
+        async function startCamera() {
+            statusText.innerText = "請求相機權限...";
+            
+            const constraints = {
+                audio: false,
+                video: {
+                    facingMode: 'environment',
+                    width: { ideal: 640 },
+                    height: { ideal: 480 }
+                }
+            };
 
-    // 每 10px 取樣一次 → 效能更好
-    for (let i = 0; i < frame.data.length; i += 40) {
-        rTotal += frame.data[i];
-        gTotal += frame.data[i+1];
-        bTotal += frame.data[i+2];
-        count++;
-    }
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                
+                video.onloadeddata = () => {
+                    video.play();
+                    resizeCanvas();
+                    startGameLoop();
+                };
+            } catch (err) {
+                statusText.innerText = "無法開啟相機：" + err.message;
+                startBtn.disabled = false;
+                startBtn.innerText = "重試";
+            }
+        }
 
-    const avgR = rTotal / count;
-    const avgG = gTotal / count;
-    const avgB = bTotal / count;
+        // 3. 遊戲開始
+        function startGameLoop() {
+            overlay.classList.add('hidden');
+            isDetecting = true;
+            score = 0;
+            scoreDisplay.innerText = score;
+            
+            // 開始計時
+            startTime = Date.now();
+            if (timerInterval) clearInterval(timerInterval);
+            timerInterval = setInterval(() => {
+                const seconds = Math.floor((Date.now() - startTime) / 1000);
+                timerDisplay.innerText = seconds;
+            }, 1000);
 
-    checkMatch(avgR, avgG, avgB);
-    requestAnimationFrame(analyzeColor);
-}
+            nextTarget();
+            predictLoop();
+        }
 
-function colorDistance(c1, c2) {
-    return Math.sqrt(
-        Math.pow(c1[0] - c2[0], 2) +
-        Math.pow(c1[1] - c2[1], 2) +
-        Math.pow(c1[2] - c2[2], 2)
-    );
-}
+        // 隨機選擇下一個目標
+        function nextTarget() {
+            const randomIndex = Math.floor(Math.random() * SCAVENGER_ITEMS.length);
+            currentTarget = SCAVENGER_ITEMS[randomIndex];
+            targetDisplay.innerText = currentTarget.name;
+            targetDisplay.style.animation = "none";
+            targetDisplay.offsetHeight; /* trigger reflow */
+            targetDisplay.style.animation = "popIn 0.3s";
+        }
 
-function checkMatch(r, g, b) {
-    const d = colorDistance([r,g,b], targetColor.rgb);
+        // 4. AI 偵測迴圈
+        async function predictLoop() {
+            if (!isDetecting) return;
 
-    // 距離越小越接近，<100 基本上會吻合
-    if (d < 100) {
-        successMsg.style.opacity = 1;
+            // 取得預測結果
+            const predictions = await model.detect(video);
 
-        setTimeout(() => {
-            successMsg.style.opacity = 0;
-            chooseNewColor();
-        }, 1200);
-    }
-}
+            // 清除畫布
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-async function init() {
-    await setupCamera();
+            // 檢查是否找到目標
+            let foundTarget = false;
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+            predictions.forEach(prediction => {
+                const [x, y, width, height] = prediction.bbox;
+                const text = prediction.class;
+                
+                // 畫框框邏輯
+                let color = '#00FFFF'; // 預設青色 (非目標)
+                let lineWidth = 2;
 
-    chooseNewColor();
-    analyzeColor();
-}
+                // 判斷是否為當前目標
+                if (!cooldown && text === currentTarget.id) {
+                    color = '#00FF00'; // 目標變成綠色
+                    lineWidth = 6;
+                    foundTarget = true;
+                }
 
-init();
-</script>
+                // 繪製
+                ctx.strokeStyle = color;
+                ctx.lineWidth = lineWidth;
+                ctx.strokeRect(x, y, width, height);
 
+                // 標籤背景
+                ctx.fillStyle = color;
+                const label = text === currentTarget.id ? currentTarget.name : text; // 目標顯示中文，其他顯示英文
+                const textWidth = ctx.measureText(label).width;
+                ctx.fillRect(x, y > 20 ? y - 25 : 0, textWidth + 10, 25);
+
+                // 標籤文字
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold 18px Arial';
+                ctx.fillText(label, x + 5, y > 20 ? y - 7 : 18);
+            });
+
+            // 如果找到目標且不在冷卻時間
+            if (foundTarget) {
+                handleSuccess();
+            }
+
+            requestAnimationFrame(predictLoop);
+        }
+
+        // 成功找到物品的處理
+        function handleSuccess() {
+            cooldown = true;
+            score++;
+            scoreDisplay.innerText = score;
+
+            // 視覺特效
+            camContainer.classList.add('success-anim'); // 螢幕邊框閃爍
+            msgArea.innerText = `找到 ${currentTarget.name} 了！ +1`;
+            msgArea.style.display = 'block';
+
+            // 震動回饋 (如果裝置支援)
+            if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+
+            // 延遲後進入下一題
+            setTimeout(() => {
+                camContainer.classList.remove('success-anim');
+                msgArea.style.display = 'none';
+                cooldown = false;
+                nextTarget();
+            }, 2000); // 2秒後換下一題
+        }
+
+        // 視窗調整處理
+        function resizeCanvas() {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+        }
+        
+        window.addEventListener('resize', () => {
+             if(video.readyState >= 2) resizeCanvas();
+        });
+
+    </script>
 </body>
 </html>
